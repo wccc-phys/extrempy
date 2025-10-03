@@ -487,7 +487,7 @@ def trans_xcvc2dump(work_dir,
 
             # 每处理一定数量的帧或一定时间后更新进度
             current_time = time.time()
-            if current_time - last_update_time > 2.0 or frame_count % 1000 == 0:  
+            if current_time - last_update_time > 1.0 or frame_count % 1000 == 0:  
                 elapsed = current_time - start_time
                 frames_per_second = frame_count / elapsed if elapsed > 0 else 0
                 # 使用回车符\r回到行首，实现单行更新
