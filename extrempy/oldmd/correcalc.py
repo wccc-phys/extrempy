@@ -52,21 +52,20 @@ class TimeCorrelationCalc(MDSys):
             The computed time correlation function.
         """
         if interval == 0:
-            skip = 0
-            interval = self.time_corre_max
+            self.interval = self.time_corre_max
         else:
-            skip = skip
-            interval = interval
+            self.interval = interval
 
+        self.skip = skip
         correlation = np.zeros(self.time_corre_max)
         count = 0
 
-        for init_idx in range(skip, self.time_corre_max, interval):
-            self._read_dump(idx=init_idx * self.dump_freq)
+        for init_idx in range(0, self.time_corre_max, interval):
+            self._read_dump(idx=init_idx * self.dump_freq + self.skip)
             q0 = quantity_func()  # Get the initial quantity
 
             for tau_idx in range(self.time_corre_max):
-                self._read_dump(idx=(init_idx + tau_idx) * self.dump_freq)
+                self._read_dump(idx=(init_idx + tau_idx) * self.dump_freq + self.skip)
                 qt = quantity_func()  # Get the quantity at time t
 
                 correlation[tau_idx] += np.sum(qt * q0)  # Compute the correlation
