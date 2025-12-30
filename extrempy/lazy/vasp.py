@@ -1,6 +1,147 @@
 from extrempy.constant import *
+from .base import InputGenerator,fermi_dirac
 
 import json
+import dpdata
+
+class VASPGenerator(InputGenerator):
+
+    def __init__(self, *arg, potcar_lib_path,
+                poscar_file = None, **kwargs):
+
+        super().__init__(*arg, **kwargs)
+
+        self.potcar_lib_path = potcar_lib_path
+
+        self.poscar_file = poscar_file
+        self._generate_poscar()
+        
+        self._generate_potcar()
+
+
+    def _generate_poscar(self):
+
+        try:
+            sys = dpdata.System(self.poscar_file, fmt='vasp/poscar')
+            self.numb_atom = sys.get_atom_numbs()
+            self.atom_names = sys.get_atom_names()
+
+            os.system('cp '+self.poscar_file+' '+os.path.join(self.work_path, 'POSCAR'))
+
+            for i in range(len(self.atom_names)):
+                print('POSCAR contains %d '%(self.numb_atom[i]) + self.atom_names[i] +' atoms')
+
+        except:
+            print('POSCAR file is not found')
+            pass
+        
+    def _generate_potcar(self):
+
+        cmd = 'cat '
+
+        for element in self.atom_names:
+
+            potcar_file = os.path.join(self.potcar_lib_path, element, 'POTCAR')
+
+            suffix = ['_pv', '_sv']
+
+            count = 0
+            while not os.path.exists(potcar_file):
+                
+
+                potcar_file = os.path.join(self.potcar_lib_path, element+suffix[count], 'POTCAR')
+
+                count += 1
+
+                if count >= len(suffix):
+                    break
+
+            cmd += potcar_file
+
+            with open(potcar_file, 'r') as f:
+                f.readline()
+                val = f.readline().split()
+                self.numb_valence = int(float(val[0]))
+
+        cmd += ' >> ' +os.path.join(self.work_path, 'POTCAR.tmp') + ' \n'
+
+        cmd += 'mv '+os.path.join(self.work_path, 'POTCAR.tmp') + ' '+os.path.join(self.work_path, 'POTCAR') + ' \n'
+
+        os.system(cmd)
+
+
+    def set_params(self, encut=600, ele_temp=300, nbands=None, scale = 1.0, nband_min=5):
+
+        self.encut = encut
+        self.ele_temp = ele_temp
+
+        nbands_0 = int(self.numb_valence * self.numb_atom[0] / 2 * scale) + nband_min * self.numb_atom[0]
+
+        if nbands is None:
+            self.nbands = nbands_0
+        else:
+            self.nbands = nbands
+
+    def generate_incar(self, md_steps=100, dt = 1, 
+                             latt_temp=None, mode='scf'):
+
+        # basic settings
+        if latt_temp is None:
+            latt_temp = self.ele_temp
+
+        cmd = '# CONTROL \n'
+        cmd += 'ISTART = 0 \n'
+        cmd += 'ICHARG = 2 \n'
+        cmd += 'LWAVE = .FALSE. \n'
+        cmd += 'LCHARG = .FALSE. \n'
+        cmd += ' \n'
+
+        cmd += '# ELECTRON \n'
+        cmd += 'ENCUT = %.d \n'%(self.encut)
+        cmd += 'NELM = 100 \n'
+        cmd += 'ALGO = Normal \n'
+        cmd += 'PREC = High \n'
+        cmd += 'ISMEAR = -1 \n'
+        cmd += 'SIGMA = %.16f \n'%(self.ele_temp * kb * J2eV)
+        cmd += 'EDIFF = 1E-6 \n'
+        cmd += 'NBANDS = %.d \n'%(self.nbands)
+        cmd += ' \n'
+
+        cmd += '# XC FUNCTIONAL \n'
+        cmd += 'GGA = PS \n'
+        cmd += ' \n'
+
+        if mode == 'scf':
+            cmd += '# ION \n'
+            cmd += 'IBRION = -1 \n'
+            cmd += 'NSW = 0 \n'
+        elif mode == 'md':
+            cmd += '# ION \n'
+            cmd += 'IBRION = 0 \n'
+            cmd += 'ISIF = 2 \n'
+            cmd += 'NSW = %.d \n'%(md_steps)
+            cmd += 'POTIM = %.2f \n'%(dt)
+            cmd += 'TEBEG = %.d \n'%(latt_temp)
+            cmd += 'TEEND = %.d \n'%(latt_temp)
+            cmd += 'SMASS = 0 \n'
+            cmd += 'MDALGO = 2 \n'
+            cmd += ' \n'
+
+        cmd += ' \n'
+        cmd += '# PARALLIZATION \n'
+        cmd += 'LREAL = Auto \n'
+        cmd += 'KPAR = 4 \n'
+        cmd += 'NPAR = 4 \n'
+        cmd += ' \n'
+        cmd += '# K-POINTS \n'
+        cmd += 'KSPACING = 0.5 \n'
+        cmd += 'KGAMMA = .TRUE. \n'
+        cmd += ' \n'
+        cmd += ' \n'
+
+        with open(os.path.join(self.work_path, 'INCAR'), 'w') as f:
+            f.write(cmd)
+
 
 class VASPParamGenerator:
 
@@ -62,9 +203,12 @@ class VASPParamGenerator:
         else:
             self.nbands = nbands
 
-    def _generate_param_input(self, mode='scf'):
+    def _generate_param_input(self, md_steps=100, dt = 1, 
+                              latt_temp=None, mode='scf'):
 
         # basic settings
+        if latt_temp is None:
+            latt_temp = self.ele_temp
 
         cmd = '# CONTROL \n'
         cmd += 'ISTART = 0 \n'
@@ -88,6 +232,17 @@ class VASPParamGenerator:
             cmd += '# ION \n'
             cmd += 'IBRION = -1 \n'
             cmd += 'NSW = 0 \n'
+        elif mode == 'md':
+            cmd += '# ION \n'
+            cmd += 'IBRION = 0 \n'
+            cmd += 'ISIF = 2 \n'
+            cmd += 'NSW = %.d \n'%(md_steps)
+            cmd += 'POTIM = %.2f \n'%(dt)
+            cmd += 'TEBEG = %.d \n'%(latt_temp)
+            cmd += 'TEEND = %.d \n'%(latt_temp)
+            cmd += 'SMASS = 0 \n'
+            cmd += 'MDALGO = 2 \n'
+            cmd += ' \n'
 
         cmd += ' \n'
         cmd += '# PARALLIZATION \n'
@@ -119,9 +274,6 @@ class VASPParamGenerator:
 
         pwd = 'lbg job submit -i job.json -p ./ -r ../'+self.job_name
         os.system(pwd)
-
-def fermi_dirac(E, mu, T):
-    return 1/(np.exp((E-mu)/(kb*T*J2eV)) + 1)
 
 
 class VASPReader:

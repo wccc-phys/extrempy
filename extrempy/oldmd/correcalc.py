@@ -1,5 +1,6 @@
 from extrempy.constant import *
 from extrempy.oldmd.base import MDSys
+import time
 
 class TimeCorrelationCalc(MDSys):
 
@@ -23,6 +24,8 @@ class TimeCorrelationCalc(MDSys):
             self.time_corre_max = int(self.numb_frames / 2)
         else:
             self.time_corre_max = int(time_corre_max / self.dt / self.dump_freq)
+            
+        print('Correlation dump files is set to %.d'%(self.time_corre_max))
 
         self.time = np.arange(self.time_corre_max) * self.dump_freq * self.dt
 
@@ -31,7 +34,7 @@ class TimeCorrelationCalc(MDSys):
         strgs += '# ================================= # \n'
         print(strgs)
 
-    def _calc_autocorrelation(self, quantity_func, skip=0, interval=0, normalize=True):
+    def _calc_autocorrelation(self, quantity_func, skip=0, interval=0, normalize=False):
         """
         Calculate the time correlation function for a given quantity.
 
@@ -60,7 +63,13 @@ class TimeCorrelationCalc(MDSys):
         correlation = np.zeros(self.time_corre_max)
         count = 0
 
-        for init_idx in range(0, self.time_corre_max, interval):
+        for init_idx in range(0, self.time_corre_max, self.interval):
+            start_time = time.time()
+
+            if init_idx == 0:
+                print('Initiated from dump.%.d'%(init_idx * self.dump_freq + self.skip) )
+                print('%.d dump files would be selected as the reference frames'%(self.time_corre_max/self.interval))
+                
             self._read_dump(idx=init_idx * self.dump_freq + self.skip)
             q0 = quantity_func()  # Get the initial quantity
 
@@ -71,6 +80,10 @@ class TimeCorrelationCalc(MDSys):
                 correlation[tau_idx] += np.sum(qt * q0)  # Compute the correlation
 
             count += 1
+            
+            elapsed = time.time() - start_time
+            print(f"Autocorrelation calculation for init_idx {init_idx * self.dump_freq + self.skip} completed in {elapsed:.2f} seconds")
+
 
         correlation /= count
 
@@ -98,7 +111,7 @@ class TimeCorrelationCalc(MDSys):
         def velocity_func():
             return np.array(self.velocity)
 
-        vacf = self._calc_autocorrelation(velocity_func, skip, interval, normalize=True)
+        vacf = 1/3 * self._calc_autocorrelation(velocity_func, skip, interval, normalize=False) 
         return vacf
 
     def calc_pacf(self, skip=0, interval=0):

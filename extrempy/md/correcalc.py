@@ -9,6 +9,7 @@ try:
 except:
     from ..constant import *
 
+from extrempy.md.base import generate_even_func
 
 class TimeCorrelationCalc:
     def __init__(self, position: np.ndarray, velocity: np.ndarray, dt: float = 1.0, time_corre_max: int = 0):
@@ -130,8 +131,8 @@ class TimeCorrelationCalc:
         Returns:
             tuple: (frequencies, spectrum)
         """
-        freq = np.fft.fftfreq(self.time.shape[0], d=self.dt)
-        spectra = np.abs(np.fft.fft(func_correlation))
+        freq = np.fft.fftfreq(generate_even_func(self.time).shape[0], d=self.dt)
+        spectra = np.abs(np.fft.fft(generate_even_func(func_correlation)))
 
         # Only return positive frequencies
         positive_freq_mask = freq >= 0

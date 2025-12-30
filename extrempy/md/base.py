@@ -14,6 +14,24 @@ except:
     from .correcalc import TimeCorrelationCalc
 
 
+def generate_even_func(data: np.ndarray) -> np.ndarray:
+    """Generate an even function from a given data.
+
+    Args:
+        data (np.ndarray): The data to generate an even function from.
+
+    Returns:
+        np.ndarray: The even function.
+    """
+
+    N = data.shape[0]
+
+    data_even = np.zeros(2*N - 1)
+    data_even[N-1:] = data
+    data_even[:N]   = data[::-1]
+
+    return data_even
+
 class System():
     """The molecular dynamic postprocessing system (for single trajectory file) of Extrempy.
     """

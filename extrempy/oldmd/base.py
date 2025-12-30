@@ -32,6 +32,9 @@ class MDSys():
             self.traj_dir = self.root
         else:
             self.traj_dir = os.path.join(self.root, traj_dir)
+
+        print('trajectory directory: ', self.traj_dir)
+        
         self.format = format
 
         dump_list = read_and_sort_files( self.traj_dir, self.format)

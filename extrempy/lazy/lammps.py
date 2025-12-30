@@ -2,6 +2,48 @@ from extrempy.lazy.lib import _get_mass_map, _get_lattice_str
 from extrempy.constant import *
 import json
 
+from .base import InputGenerator
+
+
+from jinja2 import Environment, FileSystemLoader
+import ase
+
+class LAMMPSGenerator(InputGenerator):
+
+    def __init__(self, *arg, 
+                template_path,
+                template_file,
+                **kwargs):
+
+        super().__init__(*arg, **kwargs)
+
+        self.env = Environment( loader=FileSystemLoader(template_path),
+                                trim_blocks=True, # Remove the first newline after a block
+                                lstrip_blocks=True # Strip the leading whitespace from blocks
+                                )
+
+        self.template = self.env.get_template(template_file)
+        self.params = {}
+
+    def update(self, dict_params):
+        self.params.update(dict_params)
+
+    def render(self):
+       
+       lmp_content = self.template.render(**self.params)
+       #print(lmp_content)
+       with open( os.path.join(self.work_path, 'run.in'), 'w') as f:
+           f.write(lmp_content)
+
+    def get_files(self, poscar_path,
+                        pot_path):
+
+        # transform poscar to lammps format (data file)
+        ss = ase.io.read(poscar_path, format='vasp')
+        ss.write( os.path.join(self.work_path, 'confs.data'), format='lammps-data')
+
+        cmd = 'cp %s %s/cp.pb'%(pot_path, self.work_path)
+        os.system(cmd)
 
 class LAMMPSInputGenerator:
 
