@@ -6,12 +6,8 @@ import numpy as np
 
 try:
     from extrempy.constant import *
-    from extrempy.md.sedcalc import SEDCalc
-    from extrempy.md.correcalc import TimeCorrelationCalc
 except:
     from ..constant import *
-    from .sedcalc import SEDCalc
-    from .correcalc import TimeCorrelationCalc
 
 
 def generate_even_func(data: np.ndarray) -> np.ndarray:
@@ -555,6 +551,12 @@ class MDSys(list):
         Returns:
             np.ndarray: Combined SED for all directions
         """
+        # Import here to avoid circular imports
+        try:
+            from extrempy.md.sedcalc import SEDCalc
+        except ImportError:
+            from .sedcalc import SEDCalc
+
         # Create SEDCalc instance with trajectory data
         sed_calc = SEDCalc(
             position=self.position,    # (nframes, natoms, 3)
@@ -595,6 +597,12 @@ class MDSys(list):
         Returns:
             tuple[plt.Figure, plt.Axes]: Figure and axes objects if plot is True
         """
+        # Import here to avoid circular imports
+        try:
+            from extrempy.md.sedcalc import SEDCalc
+        except ImportError:
+            from .sedcalc import SEDCalc
+
         # Create SEDCalc instance
         sed_calc = SEDCalc(
             position=self.position,
@@ -645,6 +653,11 @@ class MDSys(list):
                 - 'freq': Frequency array for VDOS
                 - 'vdos': Vibrational density of states
         """
+        # Import here to avoid circular imports
+        try:
+            from extrempy.md.correcalc import TimeCorrelationCalc
+        except ImportError:
+            from .correcalc import TimeCorrelationCalc
 
         # Create TimeCorrelationCalc instance
         tc_calc = TimeCorrelationCalc(
