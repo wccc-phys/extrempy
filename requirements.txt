@@ -1,0 +1,12 @@
+numpy
+matplotlib
+polars
+pandas
+scipy
+dpdata
+dscribe
+scikit-learn
+jinja2
+monty
+ase
+tqdm

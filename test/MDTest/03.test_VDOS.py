@@ -5,7 +5,7 @@ from extrempy.md import MDSys
 type_name = ["C",]
 
 # Path to the directory containing the dump files
-input_dir = r"C:\Users\87627\Desktop\traj-1555"
+input_dir = r"E:\Users\Lenovo\Desktop\phd\file_date\2025.7\traj-1555"
 
 # Path to the output directory
 output_dir = input_dir + r"\output"
