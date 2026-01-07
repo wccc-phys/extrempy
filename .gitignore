@@ -1,3 +1,6 @@
 build
 extrempy.egg-info
 __pycache__/
+CLAUDE.md
+.claude
+.vscode

@@ -274,12 +274,56 @@ class System():
         Returns:
             tuple[pl.DataFrame, np.ndarray, np.ndarray]: The datasets, the simulation box, and the boundary.
         """
+        import io
+
         assert self.fmt in ["dump"], "Only support dump format."
         dump_head = []
-        if self.fmt == "dump":
-            with open(self.file_name) as op:
-                for _ in range(9):
-                    dump_head.append(op.readline())
+
+        # Support both file path and StringIO
+        if isinstance(self.file_name, io.StringIO):
+            # Reading from StringIO (multi-frame mode)
+            op = self.file_name
+            for _ in range(9):
+                dump_head.append(op.readline())
+        else:
+            # Reading from file path (single-frame mode)
+            if self.fmt == "dump":
+                # Check if it's a multi-frame file first
+                with open(self.file_name, 'r') as f:
+                    # Read first 9 lines
+                    for _ in range(9):
+                        dump_head.append(f.readline())
+
+                    # Read atom count
+                    try:
+                        n_atoms_line = dump_head[3]
+                        n_atoms = int(n_atoms_line.strip())
+
+                        # Check if there's more content (potentially another frame)
+                        # Read atom data (9 + n_atoms lines) and check next line
+                        for _ in range(n_atoms + 1):  # +1 for ATOMS header line
+                            f.readline()
+
+                        next_line = f.readline()
+                        if next_line and 'ITEM: TIMESTEP' in next_line:
+                            import warnings
+                            warnings.warn(
+                                f"Multi-frame dump file detected: '{self.__file_name}'. "
+                                f"System class only supports single-frame files. Reading first frame only. "
+                                f"Use MDSys with format='dump-m' or format='dump-multi' to read all frames.",
+                                UserWarning,
+                                stacklevel=2
+                            )
+                    except Exception:
+                        pass
+
+                    # Reset file pointer for actual reading
+                    f.seek(0)
+                    # Re-read header
+                    dump_head = []
+                    for _ in range(9):
+                        dump_head.append(f.readline())
+        # ... rest of the method
 
         line = dump_head[4].split()
         boundary = [1 if i == "pp" else 0 for i in line[-3:]]
@@ -318,17 +362,77 @@ class System():
         col_names = dump_head[8].split()[2:]
 
         try:
+            # Check if reading from StringIO
+            if isinstance(self.file_name, io.StringIO):
+                # For StringIO, read atom data into string
+                atom_lines = []
+                while True:
+                    line = self.file_name.readline()
+                    if not line or line.strip().startswith('ITEM:'):
+                        break
+                    atom_lines.append(line.strip())
 
-            data = pl.read_csv(
-                self.file_name,
-                separator=" ",
-                skip_rows=9,
-                new_columns=col_names,
-                columns=range(len(col_names)),
-                has_header=False,
-                truncate_ragged_lines=True,
-            )
+                atom_data_str = '\n'.join(atom_lines)
+                data = pl.read_csv(
+                    io.StringIO(atom_data_str),
+                    separator=" ",
+                    new_columns=col_names,
+                    columns=range(len(col_names)),
+                    has_header=False,
+                )
+            else:
+                # For file path: read only first frame to avoid data pollution
+                # Get atom count from header
+                n_atoms = int(dump_head[3].strip())
+
+                # Read only the first frame atom data
+                first_frame_lines = []
+                with open(self.file_name, 'r') as f:
+                    # Skip the 9 header lines
+                    for _ in range(9):
+                        f.readline()
+                    # Read atom data lines
+                    for _ in range(n_atoms):
+                        line = f.readline()
+                        if line and not line.strip().startswith('ITEM:'):
+                            first_frame_lines.append(line.strip())
+                        else:
+                            break
+
+                atom_data_str = '\n'.join(first_frame_lines)
+                data = pl.read_csv(
+                    io.StringIO(atom_data_str),
+                    separator=" ",
+                    new_columns=col_names,
+                    columns=range(len(col_names)),
+                    has_header=False,
+                )
+
+                # Detect multi-frame file
+                try:
+                    with open(self.file_name, 'r') as f:
+                        lines_to_skip = 9 + n_atoms
+                        for _ in range(lines_to_skip):
+                            f.readline()
+                        next_line = f.readline()
+                        if next_line and 'ITEM: TIMESTEP' in next_line:
+                            import warnings
+                            RED = "\033[91m"
+                            RESET = "\033[0m"  # 重置颜色
+                            warnings.warn(
+                                f"{RED}Multi-frame dump file detected: '{self.__file_name}'. "
+                                f"System class only supports single-frame files. Reading first frame only. "
+                                f"Use MDSys with format='dump-m' or format='dump-multi' to read all frames.{RESET}",
+                                UserWarning,
+                                stacklevel=2
+                            )
+                except Exception:
+                    pass
+
         except Exception:
+            # Fallback for file reading
+            if isinstance(self.file_name, io.StringIO):
+                raise
             data = pl.read_csv(
                 self.file_name,
                 separator=" ",
@@ -359,17 +463,24 @@ class System():
 
 
 class MDSys(list):
-    """The molecular dynamic postprocessing system (for multiple trajectory files) of Extrempy.
+    """The molecular dynamic postprocessing system of Extrempy.
+
+    Supports two modes:
+    - Multi-file mode: format='dump', 'dump.*', '*.dump' (reads multiple single-frame files)
+    - Multi-frame mode: format='dump-m', 'dump-multi' (reads single file with multiple frames)
     """
 
     def __init__(self, root_dir: str, dt: float = 1.0, traj_dir: str = 'traj', format: str = 'dump', type_name: list[str] = None, is_printf: bool = True):
         """Initialize the MDSys class.
 
         Args:
-            root_dir (str): The root directory of the trajectory files.
+            root_dir (str): For multi-file mode: the root directory of the trajectory files.
+                          For multi-frame mode: the path to the single dump file.
             dt (float, optional): The time step. Defaults to 1.0.
-            traj_dir (str, optional): The trajectory directory. Defaults to 'traj'.
+            traj_dir (str, optional): The trajectory subdirectory (only used in multi-file mode). Defaults to 'traj'.
             format (str, optional): The format of the trajectory files. Defaults to 'dump'.
+                                  Use 'dump', 'dump.*', or '*.dump' for multi-file mode.
+                                  Use 'dump-m' or 'dump-multi' for multi-frame mode.
             type_name (list[str], optional): The type name. Defaults to None.
             is_printf (bool, optional): Whether to print the initialization information. Defaults to True.
         """
@@ -378,7 +489,12 @@ class MDSys(list):
         strgs += 'Molecular Dynamic PostProcessing System of Extrempy is initialized \n'
         strgs += '='*70 + '\n'
         print(strgs)
-        assert 'dump' in format, "Currently only support dump format."
+
+        # Validate format and determine if multi-frame mode
+        base_fmt, is_multi_frame = self._validate_format(format)
+        self.__base_format = base_fmt
+        self.__is_multi_frame = is_multi_frame
+
         self.__root_dir = root_dir
         self.__dt = dt
         self.__traj_dir = traj_dir
@@ -386,26 +502,40 @@ class MDSys(list):
         self.__type_name = type_name
         self.__is_printf = is_printf
 
-        # read and sort the trajectory file name
-        dump_list = self.read_and_sort_files()
+        __fmt = self.__base_format
 
-        # calculate the dump frequency
-        self.dump_freq = self.calculate_dump_freq(dump_list)
-
-        # if the format is dump, dump.*, *.dump etc., then the format is 'dump'
-        if 'dump' in self.__format:
-            __fmt = 'dump'
+        if self.__is_multi_frame:
+            # Multi-frame mode: root_dir is the file path directly
+            frame_stringios = self._split_multi_frame_dump(root_dir)
+            # Use minimal progress bar to avoid output interference
+            progress_bar = tqdm(frame_stringios, disable=not self.__is_printf,
+                              bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]')
+            for frame_io in progress_bar:
+                system = System(
+                    file_name=frame_io,
+                    dt=self.__dt,
+                    fmt=__fmt,
+                    type_name=self.__type_name
+                )
+                self.append(system)
+            # Skip dump_freq calculation for multi-frame files
+            self.dump_freq = 1
         else:
-            raise ValueError(f"Unsupported format: {self.__format}")
+            # Multi-file mode: keep original logic
+            # read and sort the trajectory file name
+            dump_list = self.read_and_sort_files()
 
-        # read the trajectory files, ever single trajectory file is a System instance
-        progress_bar = tqdm(dump_list)
-        for filename in progress_bar:
-            progress_bar.set_description(f"Reading {filename}")
-            system = System(file_name=filename,
-                            dt=self.__dt, fmt=__fmt, type_name=self.__type_name)
-            # The MDSys instance is a list of System instances, and each System instance will be added to the MDSys instance
-            self.append(system)
+            self.dump_freq = self.calculate_dump_freq(dump_list)
+            progress_bar = tqdm(dump_list)
+            for filename in progress_bar:
+                progress_bar.set_description(f"Reading {filename}")
+                system = System(
+                    file_name=filename,
+                    dt=self.__dt,
+                    fmt=__fmt,
+                    type_name=self.__type_name
+                )
+                self.append(system)
 
         # Extract data from each System instance
         pos_list, box_list, inverse_box_list, vel_list, type_list = [], [], [], [], []
@@ -483,12 +613,69 @@ class MDSys(list):
         """
         return self.__is_printf
 
-    def read_and_sort_files(self) -> list[str]:
-        """Read all files in the directory and sort them.
+    def _validate_format(self, format: str) -> tuple[str, bool]:
+        """Validate and parse format parameter.
+
+        Args:
+            format (str): The format string to validate
 
         Returns:
-            list[str]: The list of trajectory files.
+            tuple[str, bool]: (base_format, is_multi_frame)
+                - base_format: 'dump'
+                - is_multi_frame: True for 'dump-m'/'dump-multi', False otherwise
+
+        Raises:
+            ValueError: If format is not supported
         """
+        if format.endswith('-m') or format.endswith('-multi'):
+            base_fmt = format.replace('-multi', '').replace('-m', '')
+            if base_fmt not in ['dump']:
+                raise ValueError(
+                    f"Unsupported multi-frame format: {base_fmt}. "
+                    f"Currently only 'dump-m' and 'dump-multi' are supported."
+                )
+            return base_fmt, True
+
+        if 'dump' in format:
+            return 'dump', False
+
+        raise ValueError(
+            f"Unsupported format: {format}. "
+            f"Supported: 'dump', 'dump.*', '*.dump', 'dump-m', 'dump-multi'"
+        )
+
+    def read_and_sort_files(self) -> list[str]:
+        """Read all files in directory and sort them (multi-file mode),
+           or return single file path (multi-frame mode).
+
+        Returns:
+            list[str]: The list of trajectory files (multi-file mode),
+                       or single file path (multi-frame mode).
+        """
+        # Multi-frame mode: return single file
+        if self.__is_multi_frame:
+            potential_file = os.path.join(self.__root_dir, self.__traj_dir)
+
+            if os.path.isfile(potential_file):
+                return [potential_file]
+            elif os.path.isdir(potential_file):
+                file_list = glob.glob(os.path.join(potential_file, '*'))
+                dump_files = [f for f in file_list if 'dump' in os.path.basename(f).lower()]
+
+                if len(dump_files) == 0:
+                    raise FileNotFoundError(
+                        f"No dump file found in: {potential_file}"
+                    )
+                elif len(dump_files) > 1:
+                    raise FileNotFoundError(
+                        f"Multiple dump files found in: {potential_file}. "
+                        f"For multi-frame mode, specify single file directly."
+                    )
+                return dump_files
+            else:
+                raise FileNotFoundError(f"Path does not exist: {potential_file}")
+
+        # Multi-file mode: original logic
         # read all files in the directory
         if '*' not in self.__format:
             try:
@@ -533,6 +720,53 @@ class MDSys(list):
 
         # return the minimum interval
         return min(intervals)
+
+    def _split_multi_frame_dump(self, file_path: str) -> list:
+        """Split multi-frame dump file into individual frames as StringIO objects.
+
+        Args:
+            file_path (str): Path to multi-frame dump file
+
+        Returns:
+            list[io.StringIO]: List of StringIO objects, each containing one frame
+        """
+        import io
+
+        frames = []
+        current_frame_content = []
+        in_atoms_section = False
+        atom_count = 0
+        atoms_read = 0
+
+        with open(file_path, 'r') as f:
+            for line in f:
+                # Start of new frame
+                if 'ITEM: TIMESTEP' in line:
+                    # Save previous frame if exists
+                    if current_frame_content:
+                        frame_content = ''.join(current_frame_content)
+                        frames.append(io.StringIO(frame_content))
+                    # Start new frame
+                    current_frame_content = [line]
+                    in_atoms_section = False
+                    atoms_read = 0
+                elif 'ITEM: NUMBER OF ATOMS' in line:
+                    current_frame_content.append(line)
+                    in_atoms_section = False
+                elif 'ITEM: ATOMS' in line:
+                    current_frame_content.append(line)
+                    in_atoms_section = True
+                else:
+                    current_frame_content.append(line)
+                    if in_atoms_section and line.strip():
+                        atoms_read += 1
+
+            # Don't forget the last frame
+            if current_frame_content:
+                frame_content = ''.join(current_frame_content)
+                frames.append(io.StringIO(frame_content))
+
+        return frames
 
     def _calc_sed_from_traj(self, save_dir: str, k_vec_tmp: np.ndarray, nk: int = 1,
                             SKIP: int = 0, INTERVAL: int = 1, suffix: str = None, plot: bool = True, loglocator: bool = True) -> np.ndarray:
