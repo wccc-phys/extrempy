@@ -288,9 +288,42 @@ class System():
         else:
             # Reading from file path (single-frame mode)
             if self.fmt == "dump":
-                with open(self.file_name) as op:
+                # Check if it's a multi-frame file first
+                with open(self.file_name, 'r') as f:
+                    # Read first 9 lines
                     for _ in range(9):
-                        dump_head.append(op.readline())
+                        dump_head.append(f.readline())
+
+                    # Read atom count
+                    try:
+                        n_atoms_line = dump_head[3]
+                        n_atoms = int(n_atoms_line.strip())
+
+                        # Check if there's more content (potentially another frame)
+                        # Read atom data (9 + n_atoms lines) and check next line
+                        for _ in range(n_atoms + 1):  # +1 for ATOMS header line
+                            f.readline()
+
+                        next_line = f.readline()
+                        if next_line and 'ITEM: TIMESTEP' in next_line:
+                            import warnings
+                            warnings.warn(
+                                f"Multi-frame dump file detected: '{self.__file_name}'. "
+                                f"System class only supports single-frame files. Reading first frame only. "
+                                f"Use MDSys with format='dump-m' or format='dump-multi' to read all frames.",
+                                UserWarning,
+                                stacklevel=2
+                            )
+                    except Exception:
+                        pass
+
+                    # Reset file pointer for actual reading
+                    f.seek(0)
+                    # Re-read header
+                    dump_head = []
+                    for _ in range(9):
+                        dump_head.append(f.readline())
+        # ... rest of the method
 
         line = dump_head[4].split()
         boundary = [1 if i == "pp" else 0 for i in line[-3:]]
@@ -348,30 +381,48 @@ class System():
                     has_header=False,
                 )
             else:
-                # Original file reading logic
+                # For file path: read only first frame to avoid data pollution
+                # Get atom count from header
+                n_atoms = int(dump_head[3].strip())
+
+                # Read only the first frame atom data
+                first_frame_lines = []
+                with open(self.file_name, 'r') as f:
+                    # Skip the 9 header lines
+                    for _ in range(9):
+                        f.readline()
+                    # Read atom data lines
+                    for _ in range(n_atoms):
+                        line = f.readline()
+                        if line and not line.strip().startswith('ITEM:'):
+                            first_frame_lines.append(line.strip())
+                        else:
+                            break
+
+                atom_data_str = '\n'.join(first_frame_lines)
                 data = pl.read_csv(
-                    self.file_name,
+                    io.StringIO(atom_data_str),
                     separator=" ",
-                    skip_rows=9,
                     new_columns=col_names,
                     columns=range(len(col_names)),
                     has_header=False,
-                    truncate_ragged_lines=True,
                 )
 
                 # Detect multi-frame file
                 try:
                     with open(self.file_name, 'r') as f:
-                        lines_to_skip = 9 + data.shape[0]
+                        lines_to_skip = 9 + n_atoms
                         for _ in range(lines_to_skip):
                             f.readline()
                         next_line = f.readline()
                         if next_line and 'ITEM: TIMESTEP' in next_line:
                             import warnings
+                            RED = "\033[91m"
+                            RESET = "\033[0m"  # 重置颜色
                             warnings.warn(
-                                f"Multi-frame dump file detected: '{self.__file_name}'. "
+                                f"{RED}Multi-frame dump file detected: '{self.__file_name}'. "
                                 f"System class only supports single-frame files. Reading first frame only. "
-                                f"Use MDSys with format='dump-m' or format='dump-multi' to read all frames.",
+                                f"Use MDSys with format='dump-m' or format='dump-multi' to read all frames.{RESET}",
                                 UserWarning,
                                 stacklevel=2
                             )
@@ -456,9 +507,10 @@ class MDSys(list):
         if self.__is_multi_frame:
             # Multi-frame mode: root_dir is the file path directly
             frame_stringios = self._split_multi_frame_dump(root_dir)
-            progress_bar = tqdm(frame_stringios)
+            # Use minimal progress bar to avoid output interference
+            progress_bar = tqdm(frame_stringios, disable=not self.__is_printf,
+                              bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]')
             for frame_io in progress_bar:
-                progress_bar.set_description(f"Processing frame")
                 system = System(
                     file_name=frame_io,
                     dt=self.__dt,
